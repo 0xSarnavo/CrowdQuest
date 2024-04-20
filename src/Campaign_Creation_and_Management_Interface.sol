@@ -4,8 +4,11 @@ pragma solidity ^0.8.0;
 import "../node_modules/@openzeppelin/contracts/access/Ownable.sol";
 import "../node_modules/@openzeppelin/contracts/utils/Pausable.sol";
 
+/**
+ * @title Campaign
+ * @dev A smart contract for managing crowdfunding campaigns.
+ */
 contract Campaign is Ownable, Pausable {
-
     // Events
     event CampaignStarted(address indexed owner, uint256 endTime);
     event ContributorRegistered(address indexed contributor);
@@ -23,15 +26,20 @@ contract Campaign is Ownable, Pausable {
     address[] private campaignContributors;
     mapping(address => uint256) private contributions;
     string[] private imageIPFSAddresses;
-    uint private imageCounter;
+    uint private imageCount;
     mapping(address => string[]) private addressContributions;
     uint256 private timeLimitInDays;
     uint256 private endTime;
     bool private active;
     bool private campaignCanceled;
 
-
-    // Constructor
+    /**
+     * @dev Constructor to initialize the Campaign contract.
+     * @param _name The name of the campaign.
+     * @param _description The description of the campaign.
+     * @param _exampleImages Array of example image IPFS addresses.
+     * @param _minimumImage The minimum number of images required for the campaign.
+     */
     constructor(
         string memory _name,
         string memory _description,
@@ -47,7 +55,7 @@ contract Campaign is Ownable, Pausable {
         campaignDescription = _description;
         exampleImageIPFSAddresses = _exampleImages;
         minimumImage = _minimumImage;
-        imageCounter = 0;
+        imageCount = 0;
         rewardPool = msg.value;
     }
 
@@ -57,7 +65,10 @@ contract Campaign is Ownable, Pausable {
         _;
     }
 
-    // Functions
+    /**
+     * @dev Starts a new campaign with a specified time limit.
+     * @param _timeLimitInDays The duration of the campaign in days.
+     */
     function startCampaign(uint256 _timeLimitInDays) external onlyOwner whenNotPaused {
         require(!active, "Campaign is already active");
         require(!campaignCanceled, "Campaign is canceled");
@@ -70,6 +81,19 @@ contract Campaign is Ownable, Pausable {
         emit CampaignStarted(owner(), endTime);
     }
 
+    /**
+     * @dev Gets details of the campaign.
+     * @return owner Address of the campaign owner.
+     * @return active Whether the campaign is active.
+     * @return campaignName Name of the campaign.
+     * @return campaignDescription Description of the campaign.
+     * @return exampleImageIPFSAddresses Array of example image IPFS addresses.
+     * @return rewardPool Total reward pool balance.
+     * @return minimumImage Minimum number of images required for the campaign.
+     * @return imageCount Current number of uploaded images.
+     * @return totalContributors Total number of contributors to the campaign.
+     * @return campaignContributors Array of campaign contributors.
+     */
     function getCampaignDetails()
         external
         view
@@ -83,7 +107,7 @@ contract Campaign is Ownable, Pausable {
             uint256,
             uint256,
             uint256,
-            address[] memory
+            address[] memory 
         )
     {
         return (
@@ -94,18 +118,25 @@ contract Campaign is Ownable, Pausable {
             exampleImageIPFSAddresses,
             rewardPool,
             minimumImage,
-            imageCounter,
+            imageCount,
             campaignContributors.length,
             campaignContributors
         );
     }
 
+    /**
+     * @dev Gets the time left for the campaign to end.
+     * @return daysLeft Number of days left for the campaign.
+     * @return hoursLeft Number of hours left for the campaign.
+     * @return minutesLeft Number of minutes left for the campaign.
+     */
     function getTimeLeft()
         external
         view
         returns (uint256 daysLeft, uint256 hoursLeft, uint256 minutesLeft)
     {
         require(active, "Campaign is not active");
+        require(!campaignCanceled, "Campaign is canceled");
         require(block.timestamp < endTime, "Campaign is over");
 
         uint256 timeLeft = endTime - block.timestamp;
@@ -114,6 +145,9 @@ contract Campaign is Ownable, Pausable {
         minutesLeft = (timeLeft % 1 hours) / 1 minutes;
     }
 
+    /**
+     * @dev Registers a contributor to the campaign.
+     */
     function register() external whenNotPaused {
         require(!campaignCanceled, "Campaign is canceled");
         require(endTime == 0 || block.timestamp < endTime, "Campaign is over");
@@ -125,40 +159,48 @@ contract Campaign is Ownable, Pausable {
         emit ContributorRegistered(msg.sender);
     }
 
+    /**
+     * @dev Uploads an image to the campaign.
+     * @param _imageIPFSAddress The IPFS address of the uploaded image.
+     */
     function uploadImage(string memory _imageIPFSAddress) external onlyRegisteredContributor whenNotPaused {
         require(active, "Campaign hasn't started");
+        require(!campaignCanceled, "Campaign is canceled");
         require(block.timestamp < endTime, "Campaign is over");
 
         addressContributions[msg.sender].push(_imageIPFSAddress);
         imageIPFSAddresses.push(_imageIPFSAddress);
         contributions[msg.sender]++;
-        imageCounter++;
+        imageCount++;
 
         emit ImageUploaded(msg.sender, _imageIPFSAddress);
     }
 
-    function cancelCampaign() external onlyOwner whenNotPaused {
-        require(!campaignCanceled, "Campaign already canceled");
-        campaignCanceled = true;
-
-        emit CampaignCanceled();
-    }
-
+    /**
+     * @dev Closes the campaign and transfers the balance to the specified receiver.
+     * @param _receiver The address to which the balance should be transferred.
+     */
     function closeCampaign(address payable _receiver) external onlyOwner whenNotPaused {
         require(!campaignCanceled, "Campaign is canceled");
-        require(!active || (imageCounter < minimumImage * 80 / 100), "Cannot close campaign");
+        require(!active || (imageCount < minimumImage * 80 / 100), "Cannot close campaign");
 
         uint256 balanceToTransfer = address(this).balance;
         require(balanceToTransfer > 0, "No balance to transfer");
 
-        _receiver.transfer(balanceToTransfer);
+        // Effects (state change) complete, now do the interaction (external call)
+        (bool success, ) = _receiver.call{value: balanceToTransfer}("");
+        require(success, "Transfer failed");
+
+        // Set campaignCanceled to true only after successful transfer
+        campaignCanceled = true;
 
         emit CampaignClosed(_receiver, balanceToTransfer);
     }
 
-    // Fallback function
+    /**
+     * @dev Fallback function to reject ether transfers.
+     */
     receive() external payable {
         revert("Ether transfers to this contract are not allowed");
     }
-
 }
