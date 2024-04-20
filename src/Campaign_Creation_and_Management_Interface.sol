@@ -1,141 +1,164 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract Campaign {
-    // State variables to store campaign details
-    address public campaignOwner; // Address of the campaign owner
-    string public campaignName; // Name of the campaign
-    string public campaignDescription; // Description of the campaign
-    string[] public exampleImageIPFSAddresses; // Array to store example image IPFS addresses
-    uint public minimumImage; // Minimum number of images required for the campaign
-    uint public rewardPool; // Reward pool for the campaign
-    mapping(address => bool) public addressRegistered; // Mapping to track registered addresses
-    address[] public campaignContributors; // Array to store addresses of contributors
-    mapping(address => uint) public contributions; // Mapping to store contribution counts of contributors
-    string[] public imageIPFSAddresses; // Array to store uploaded image IPFS addresses
-    mapping(address => string[]) public addressContributions; // Mapping to store image contributions of contributors
-    uint public timeLimitInDays; // Duration of the campaign in days
-    uint public endTime; // End time of the campaign
-    bool public active; // Flag indicating whether the campaign is active
-    uint public imageCount; // Total count of uploaded images
-    
-    // Event emitted when the campaign is started
-    event CampaignStarted(address indexed owner, uint endTime);
-    // Event emitted when a contributor is registered
-    event ContributorRegistered(address indexed contributor);
-    // Event emitted when an image is uploaded
-    event ImageUploaded(address indexed contributor, string imageIPFSAddress);
+import "../node_modules/@openzeppelin/contracts/access/Ownable.sol";
+import "../node_modules/@openzeppelin/contracts/utils/Pausable.sol";
 
-    // Constructor to initialize the campaign with the provided details
+contract Campaign is Ownable, Pausable {
+
+    // Events
+    event CampaignStarted(address indexed owner, uint256 endTime);
+    event ContributorRegistered(address indexed contributor);
+    event ImageUploaded(address indexed contributor, string imageIPFSAddress);
+    event CampaignCanceled();
+    event CampaignClosed(address indexed receiver, uint256 amount);
+
+    // State variables
+    string private campaignName;
+    string private campaignDescription;
+    string[] private exampleImageIPFSAddresses;
+    uint256 private minimumImage;
+    uint256 private rewardPool;
+    mapping(address => bool) private addressRegistered;
+    address[] private campaignContributors;
+    mapping(address => uint256) private contributions;
+    string[] private imageIPFSAddresses;
+    uint private imageCounter;
+    mapping(address => string[]) private addressContributions;
+    uint256 private timeLimitInDays;
+    uint256 private endTime;
+    bool private active;
+    bool private campaignCanceled;
+
+
+    // Constructor
     constructor(
-        address _campaignOwner,
-        string memory _campaignName,
-        string memory _campaignDescription,
-        string[] memory _exampleImageIPFSAddresses,
-        uint _minimumImage
-    ) payable {
-        // Check if the campaign owner address is not zero
-        require(_campaignOwner != address(0), "Campaign owner cannot be the zero address");
-        // Check if reward is provided for the campaign
-        require(msg.value > 0, "Provide reward for the task");
-        // Initialize campaign details
-        campaignOwner = _campaignOwner;
-        campaignName = _campaignName;
-        campaignDescription = _campaignDescription;
-        for (uint i = 0; i < _exampleImageIPFSAddresses.length; i++) {
-            exampleImageIPFSAddresses.push(_exampleImageIPFSAddresses[i]);
-        }
+        string memory _name,
+        string memory _description,
+        string[] memory _exampleImages,
+        uint256 _minimumImage
+    )  Ownable(msg.sender) payable {
+        require(bytes(_name).length > 0, "Name cannot be empty");
+        require(bytes(_description).length > 0, "Description cannot be empty");
+        require(_exampleImages.length > 0, "Provide example images");
+        require(_minimumImage > 0, "Minimum image count must be greater than zero");
+
+        campaignName = _name;
+        campaignDescription = _description;
+        exampleImageIPFSAddresses = _exampleImages;
         minimumImage = _minimumImage;
+        imageCounter = 0;
         rewardPool = msg.value;
-        active = false;
     }
 
-    // Function to start the campaign with the specified duration
-    function startCampaign(uint _timeLimitInDays) public {
-        // Check if the caller is the campaign owner
-        require(msg.sender == campaignOwner, "Only owner can start the campaign");
-        // Check if the campaign is not already active
+    // Modifiers
+    modifier onlyRegisteredContributor() {
+        require(addressRegistered[msg.sender], "Address not registered as contributor");
+        _;
+    }
+
+    // Functions
+    function startCampaign(uint256 _timeLimitInDays) external onlyOwner whenNotPaused {
         require(!active, "Campaign is already active");
-        // Check if the specified duration meets the minimum requirement
+        require(!campaignCanceled, "Campaign is canceled");
         require(_timeLimitInDays >= 7, "Minimum campaign duration is 7 days");
-        // Set the campaign duration and end time
+
         timeLimitInDays = _timeLimitInDays;
         endTime = block.timestamp + (_timeLimitInDays * 1 days);
         active = true;
 
-        // Emit CampaignStarted event
-        emit CampaignStarted(campaignOwner, endTime);
+        emit CampaignStarted(owner(), endTime);
     }
 
-    // Function to get the campaign details
-    function getCampaignDetails() public view returns (
-        address, // Owner address
-        bool, // Campaign active status
-        string memory, // Campaign name
-        string memory, // Campaign description
-        string[] memory, // Example images
-        uint, // Reward pool
-        uint, // Minimum image goal
-        uint, // Current image count
-        uint, // Current number of contributors
-        address[] memory // Contributor addresses
-    ) {
+    function getCampaignDetails()
+        external
+        view
+        returns (
+            address,
+            bool,
+            string memory,
+            string memory,
+            string[] memory,
+            uint256,
+            uint256,
+            uint256,
+            uint256,
+            address[] memory
+        )
+    {
         return (
-            campaignOwner,
+            owner(),
             active,
             campaignName,
             campaignDescription,
             exampleImageIPFSAddresses,
             rewardPool,
-            
             minimumImage,
-            imageCount,
+            imageCounter,
             campaignContributors.length,
             campaignContributors
         );
     }
 
-    // Function to get the time left until the end of the campaign
-    function getTimeLeft() public view returns (uint, uint, uint) {
-        // Check if the campaign is active and not over
+    function getTimeLeft()
+        external
+        view
+        returns (uint256 daysLeft, uint256 hoursLeft, uint256 minutesLeft)
+    {
         require(active, "Campaign is not active");
         require(block.timestamp < endTime, "Campaign is over");
-        // Calculate time left in days, hours, and minutes
-        uint timeLeft = endTime - block.timestamp;
-        uint daysLeft = timeLeft / 1 days;
-        uint hoursLeft = (timeLeft % 1 days) / 1 hours;
-        uint minutesLeft = (timeLeft % 1 hours) / 1 minutes;
-        return (daysLeft, hoursLeft, minutesLeft);
+
+        uint256 timeLeft = endTime - block.timestamp;
+        daysLeft = timeLeft / 1 days;
+        hoursLeft = (timeLeft % 1 days) / 1 hours;
+        minutesLeft = (timeLeft % 1 hours) / 1 minutes;
     }
 
-    // Function to register a contributor
-    function register(address _participant) public {
-        // Check if the contributor address is not already registered
-        require(!addressRegistered[_participant], "Address already registered");
-        // Register the contributor
-        addressRegistered[_participant] = true;
-        campaignContributors.push(_participant);
-        contributions[_participant] = 0;
+    function register() external whenNotPaused {
+        require(!campaignCanceled, "Campaign is canceled");
+        require(endTime == 0 || block.timestamp < endTime, "Campaign is over");
+        require(!addressRegistered[msg.sender], "Address already registered");
 
-        // Emit ContributorRegistered event
-        emit ContributorRegistered(_participant);
+        addressRegistered[msg.sender] = true;
+        campaignContributors.push(msg.sender);
+
+        emit ContributorRegistered(msg.sender);
     }
 
-    // Function to upload an image contribution
-    function uploadImage(address _sender, string memory _imageIPFSAddress) public {
-        // Check if the campaign is active
+    function uploadImage(string memory _imageIPFSAddress) external onlyRegisteredContributor whenNotPaused {
         require(active, "Campaign hasn't started");
-        // Check if the campaign is not over
         require(block.timestamp < endTime, "Campaign is over");
-        // Check if the contributor address is registered
-        require(addressRegistered[_sender], "Address isn't registered");
-        // Add the image contribution
-        addressContributions[_sender].push(_imageIPFSAddress);
-        imageIPFSAddresses.push(_imageIPFSAddress);
-        contributions[_sender]++;
-        imageCount++;
 
-        // Emit ImageUploaded event
-        emit ImageUploaded(_sender, _imageIPFSAddress);
+        addressContributions[msg.sender].push(_imageIPFSAddress);
+        imageIPFSAddresses.push(_imageIPFSAddress);
+        contributions[msg.sender]++;
+        imageCounter++;
+
+        emit ImageUploaded(msg.sender, _imageIPFSAddress);
     }
+
+    function cancelCampaign() external onlyOwner whenNotPaused {
+        require(!campaignCanceled, "Campaign already canceled");
+        campaignCanceled = true;
+
+        emit CampaignCanceled();
+    }
+
+    function closeCampaign(address payable _receiver) external onlyOwner whenNotPaused {
+        require(!campaignCanceled, "Campaign is canceled");
+        require(!active || (imageCounter < minimumImage * 80 / 100), "Cannot close campaign");
+
+        uint256 balanceToTransfer = address(this).balance;
+        require(balanceToTransfer > 0, "No balance to transfer");
+
+        _receiver.transfer(balanceToTransfer);
+
+        emit CampaignClosed(_receiver, balanceToTransfer);
+    }
+
+    // Fallback function
+    receive() external payable {
+        revert("Ether transfers to this contract are not allowed");
+    }
+
 }
